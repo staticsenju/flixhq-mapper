@@ -6,7 +6,10 @@ const stringSimilarity = require('string-similarity');
 const FlixHQ = require('flixhq-api');
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
-const DATA_FILE = 'mappings.json';
+if (!fs.existsSync('src')) {
+  fs.mkdirSync('src');
+}
+const DATA_FILE = 'src/mappings.json';
 const DELAY_MS = 1200;
 
 const flix = new FlixHQ();
