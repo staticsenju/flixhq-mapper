@@ -277,6 +277,36 @@ app.get('/source/:serverId', async (req, res) => {
   }
 });
 
+function parseTime(value) {
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parts = value.split(':');
+
+    if (parts.length === 3) {
+      const hours = parseInt(parts[0]) || 0;
+      const minutes = parseInt(parts[1]) || 0;
+      const seconds = parseInt(parts[2]) || 0;
+      return hours * 3600 + minutes * 60 + seconds;
+    }
+
+    if (parts.length === 2) {
+      const minutes = parseInt(parts[0]) || 0;
+      const seconds = parseInt(parts[1]) || 0;
+      return minutes * 60 + seconds;
+    }
+
+    const num = parseFloat(value);
+    if (!isNaN(num)) {
+      return num;
+    }
+  }
+
+  return null;
+}
+
 app.get('/skip/:tmdbId/:season/:episode', (req, res) => {
   const { tmdbId, season, episode } = req.params;
   const episodeKey = `tmdb_${tmdbId}_s${season}_e${episode}`;
@@ -298,10 +328,32 @@ app.post('/skip/:tmdbId/:season/:episode', (req, res) => {
   const { tmdbId, season, episode } = req.params;
   const { intro, outro } = req.body;
 
-  if (!intro || !outro || typeof intro.start !== 'number' || typeof intro.end !== 'number' ||
-      typeof outro.start !== 'number' || typeof outro.end !== 'number') {
-    return res.status(400).json({ error: "Invalid timestamps" });
+  if (!intro || !outro || intro.start == null || intro.end == null ||
+      outro.start == null || outro.end == null) {
+    return res.status(400).json({ error: "Missing intro or outro timestamps" });
   }
+
+  const introStart = parseTime(intro.start);
+  const introEnd = parseTime(intro.end);
+  const outroStart = parseTime(outro.start);
+  const outroEnd = parseTime(outro.end);
+
+  if (introStart === null || introEnd === null || outroStart === null || outroEnd === null) {
+    return res.status(400).json({
+      error: "Invalid time format. Use seconds (90) or time string ('00:01:30')"
+    });
+  }
+
+  if (introStart < 0 || introEnd < 0 || outroStart < 0 || outroEnd < 0) {
+    return res.status(400).json({ error: "Time values cannot be negative" });
+  }
+
+  if (introStart >= introEnd || outroStart >= outroEnd) {
+    return res.status(400).json({ error: "Start time must be before end time" });
+  }
+
+  const normalizedIntro = { start: introStart, end: introEnd };
+  const normalizedOutro = { start: outroStart, end: outroEnd };
 
   const episodeKey = `tmdb_${tmdbId}_s${season}_e${episode}`;
 
@@ -318,10 +370,10 @@ app.post('/skip/:tmdbId/:season/:episode', (req, res) => {
     const avgOutroEnd = usableForAvg.reduce((sum, s) => sum + s.outro.end, 0) / usableForAvg.length;
 
     const isOutlier =
-      Math.abs(intro.start - avgIntroStart) > 30 ||
-      Math.abs(intro.end - avgIntroEnd) > 30 ||
-      Math.abs(outro.start - avgOutroStart) > 30 ||
-      Math.abs(outro.end - avgOutroEnd) > 30;
+      Math.abs(normalizedIntro.start - avgIntroStart) > 30 ||
+      Math.abs(normalizedIntro.end - avgIntroEnd) > 30 ||
+      Math.abs(normalizedOutro.start - avgOutroStart) > 30 ||
+      Math.abs(normalizedOutro.end - avgOutroEnd) > 30;
 
     if (isOutlier) {
       initialVotes = -1;
@@ -332,8 +384,8 @@ app.post('/skip/:tmdbId/:season/:episode', (req, res) => {
 
   const newSubmission = {
     id: submissionId,
-    intro,
-    outro,
+    intro: normalizedIntro,
+    outro: normalizedOutro,
     votes: initialVotes,
     verified: false,
     submittedAt: new Date().toISOString()
