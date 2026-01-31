@@ -14,7 +14,7 @@ A specialized Node.js API that maps movie and TV data between The Movie Database
 
 ```bash
 # Clone the repository
-git clone [https://github.com/staticsenju/flixhq-mapper.git
+git clone https://github.com/staticsenju/flixhq-mapper
 cd flixhq-mapper
 
 # Install dependencies
