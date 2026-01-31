@@ -5,29 +5,33 @@ const cors = require('cors');
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
 const FlixHQ = require('flixhq-api');
+const low = require('lowdb');
+const FileSync = require('lowdb/adapters/FileSync');
 
 const app = express();
 const PORT = 3000;
 if (!fs.existsSync('src')) {
   fs.mkdirSync('src');
 }
-const DATA_FILE = 'src/mappings.json';
+
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
+const ADMIN_KEY = process.env.ADMIN_KEY || 'change-me-in-production';
+
+const mappingsAdapter = new FileSync('src/mappings.json');
+const db = low(mappingsAdapter);
+db.defaults({ mappings: [] }).write();
+
+const skipAdapter = new FileSync('src/skiptimes.json');
+const skipDb = low(skipAdapter);
+skipDb.defaults({ episodes: {} }).write();
 
 const flix = new FlixHQ();
 
 app.use(cors());
 app.use(express.json());
 
-let mappings = [];
-try {
-  if (fs.existsSync(DATA_FILE)) {
-    mappings = JSON.parse(fs.readFileSync(DATA_FILE));
-    console.log(`[System] Loaded ${mappings.length} mappings.`);
-  }
-} catch (e) {
-  console.error("Error loading cache");
-}
+console.log(`[System] Loaded ${db.get('mappings').size().value()} mappings.`);
+console.log(`[System] Loaded skip times for ${Object.keys(skipDb.get('episodes').value()).length} episodes.`);
 
 async function getTmdbMetadata(id, type) {
   try {
@@ -84,7 +88,7 @@ app.get('/tv-shows', async (req, res) => {
 });
 
 app.get('/top-imdb', async (req, res) => {
-  const type = req.query.type || 'all'; 
+  const type = req.query.type || 'all';
   const page = req.query.page || 1;
   console.log(`[Top IMDB] Type: ${type}, Page: ${page}`);
   const data = await flix.fetchTopIMDB(type, page);
@@ -118,8 +122,9 @@ app.get('/filter', async (req, res) => {
 });
 
 app.get('/getlatest', (req, res) => {
-  const type = req.query.type; 
-  
+  const type = req.query.type;
+  const mappings = db.get('mappings').value();
+
   if (!mappings || mappings.length === 0) {
     return res.json({ id: 0, found: false });
   }
@@ -134,7 +139,7 @@ app.get('/getlatest', (req, res) => {
     let lastSeq = ids[0];
     for (let i = 0; i < ids.length - 1; i++) {
       if (ids[i+1] !== ids[i] + 1) {
-        break; 
+        break;
       }
       lastSeq = ids[i+1];
     }
@@ -146,7 +151,7 @@ app.get('/getlatest', (req, res) => {
 
 app.get('/servers/:id', async (req, res) => {
   const { id } = req.params;
-  const { type } = req.query; 
+  const { type } = req.query;
   console.log(`[Servers] Fetching for ID: ${id} (Type: ${type})`);
   const servers = await flix.getServers(id, type || 'tv');
   res.json({ found: servers.length > 0, id, type, servers });
@@ -156,15 +161,15 @@ app.get('/map/tmdb/:id', async (req, res) => {
   const tmdbId = parseInt(req.params.id);
   const type = req.query.type || 'movie';
 
-  let match = mappings.find(m => m.tmdb_id === tmdbId && m.type === type);
-  
+  const match = db.get('mappings').find({ tmdb_id: tmdbId, type }).value();
+
   if (match) {
     return res.json({ found: true, ...match, source: 'cache' });
   }
 
   console.log(`[Mapper] Searching for TMDB ID: ${tmdbId} (${type})`);
   const tmdbMeta = await getTmdbMetadata(tmdbId, type);
-  
+
   if (!tmdbMeta) return res.status(404).json({ found: false, error: "Invalid TMDB ID" });
 
   const bestMatch = await findBestMatch(tmdbMeta, type);
@@ -192,9 +197,8 @@ app.get('/map/tmdb/:id', async (req, res) => {
       genres: details.genres
     };
 
-    mappings.push(newEntry);
-    fs.writeFileSync(DATA_FILE, JSON.stringify(mappings, null, 2));
-    
+    db.get('mappings').push(newEntry).write();
+
     return res.json({ found: true, ...newEntry, source: 'live' });
   }
 
@@ -203,8 +207,8 @@ app.get('/map/tmdb/:id', async (req, res) => {
 
 app.get(/\/map\/flix\/(.+)/, async (req, res) => {
   const slug = req.params[0];
-  
-  const match = mappings.find(m => m.flix_slug === slug);
+
+  const match = db.get('mappings').find({ flix_slug: slug }).value();
   if (match) {
     return res.json({ found: true, ...match, source: 'cache' });
   }
@@ -217,7 +221,7 @@ app.get(/\/map\/flix\/(.+)/, async (req, res) => {
   }
 
   const type = slug.includes('movie/') ? 'movie' : 'tv';
-  
+
   console.log(`[Reverse Map] Searching TMDB for: ${details.title} (${details.year})`);
   const tmdbResult = await searchTmdb(details.title, details.year, type);
 
@@ -236,8 +240,7 @@ app.get(/\/map\/flix\/(.+)/, async (req, res) => {
       genres: details.genres
     };
 
-    mappings.push(newEntry);
-    fs.writeFileSync(DATA_FILE, JSON.stringify(mappings, null, 2));
+    db.get('mappings').push(newEntry).write();
 
     return res.json({ found: true, ...newEntry, source: 'live_reverse' });
   }
@@ -264,14 +267,149 @@ app.get('/episodes/:seasonId', async (req, res) => {
 app.get('/source/:serverId', async (req, res) => {
   const { serverId } = req.params;
   console.log(`[Source] Fetching stream for server ID: ${serverId}`);
-  
+
   const sourceData = await flix.fetchSource(serverId);
-  
+
   if (sourceData) {
     res.json({ found: true, server_id: serverId, ...sourceData });
   } else {
     res.status(500).json({ found: false, error: "Failed to extract video source. Key extraction might be outdated." });
   }
+});
+
+app.get('/skip/:tmdbId/:season/:episode', (req, res) => {
+  const { tmdbId, season, episode } = req.params;
+  const episodeKey = `tmdb_${tmdbId}_s${season}_e${episode}`;
+
+  const submissions = skipDb.get(`episodes.${episodeKey}`).value() || [];
+
+  const filtered = submissions.filter(s => s.votes > -2);
+
+  if (filtered.length === 0) {
+    return res.json({ found: false, episodeKey, submissions: [] });
+  }
+
+  const best = filtered.reduce((max, current) => current.votes > max.votes ? current : max);
+
+  res.json({ found: true, episodeKey, best, all: filtered });
+});
+
+app.post('/skip/:tmdbId/:season/:episode', (req, res) => {
+  const { tmdbId, season, episode } = req.params;
+  const { intro, outro } = req.body;
+
+  if (!intro || !outro || typeof intro.start !== 'number' || typeof intro.end !== 'number' ||
+      typeof outro.start !== 'number' || typeof outro.end !== 'number') {
+    return res.status(400).json({ error: "Invalid timestamps" });
+  }
+
+  const episodeKey = `tmdb_${tmdbId}_s${season}_e${episode}`;
+
+  const submissions = skipDb.get(`episodes.${episodeKey}`).value() || [];
+  let initialVotes = 0;
+
+  const verifiedSubs = submissions.filter(s => s.verified);
+  const usableForAvg = verifiedSubs.length >= 1 ? verifiedSubs : submissions.filter(s => s.votes >= 3);
+
+  if (usableForAvg.length >= 3) {
+    const avgIntroStart = usableForAvg.reduce((sum, s) => sum + s.intro.start, 0) / usableForAvg.length;
+    const avgIntroEnd = usableForAvg.reduce((sum, s) => sum + s.intro.end, 0) / usableForAvg.length;
+    const avgOutroStart = usableForAvg.reduce((sum, s) => sum + s.outro.start, 0) / usableForAvg.length;
+    const avgOutroEnd = usableForAvg.reduce((sum, s) => sum + s.outro.end, 0) / usableForAvg.length;
+
+    const isOutlier =
+      Math.abs(intro.start - avgIntroStart) > 30 ||
+      Math.abs(intro.end - avgIntroEnd) > 30 ||
+      Math.abs(outro.start - avgOutroStart) > 30 ||
+      Math.abs(outro.end - avgOutroEnd) > 30;
+
+    if (isOutlier) {
+      initialVotes = -1;
+    }
+  }
+
+  const submissionId = `${episodeKey}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+  const newSubmission = {
+    id: submissionId,
+    intro,
+    outro,
+    votes: initialVotes,
+    verified: false,
+    submittedAt: new Date().toISOString()
+  };
+
+  skipDb.get(`episodes.${episodeKey}`)
+    .push(newSubmission)
+    .write();
+
+  res.json({ success: true, submission: newSubmission });
+});
+
+app.post('/skip/vote/:submissionId', (req, res) => {
+  const { submissionId } = req.params;
+  const { vote } = req.body;
+
+  if (vote !== 'upvote' && vote !== 'downvote') {
+    return res.status(400).json({ error: "Invalid vote type" });
+  }
+
+  let found = false;
+  let updatedSubmission = null;
+  const episodes = skipDb.get('episodes').value();
+
+  for (const episodeKey in episodes) {
+    const submission = skipDb.get(`episodes.${episodeKey}`).find({ id: submissionId }).value();
+    if (submission) {
+      skipDb.get(`episodes.${episodeKey}`)
+        .find({ id: submissionId })
+        .assign({ votes: submission.votes + (vote === 'upvote' ? 1 : -1) })
+        .write();
+
+      updatedSubmission = skipDb.get(`episodes.${episodeKey}`).find({ id: submissionId }).value();
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    return res.status(404).json({ error: "Submission not found" });
+  }
+
+  res.json({ success: true, submission: updatedSubmission });
+});
+
+app.post('/skip/admin/verify/:submissionId', (req, res) => {
+  const { submissionId } = req.params;
+  const { adminKey } = req.body;
+
+  if (adminKey !== ADMIN_KEY) {
+    return res.status(403).json({ error: "Invalid admin key" });
+  }
+
+  let found = false;
+  let updatedSubmission = null;
+  const episodes = skipDb.get('episodes').value();
+
+  for (const episodeKey in episodes) {
+    const submission = skipDb.get(`episodes.${episodeKey}`).find({ id: submissionId }).value();
+    if (submission) {
+      skipDb.get(`episodes.${episodeKey}`)
+        .find({ id: submissionId })
+        .assign({ verified: true })
+        .write();
+
+      updatedSubmission = skipDb.get(`episodes.${episodeKey}`).find({ id: submissionId }).value();
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    return res.status(404).json({ error: "Submission not found" });
+  }
+
+  res.json({ success: true, message: "Submission verified", submission: updatedSubmission });
 });
 
 app.listen(PORT, () => {
