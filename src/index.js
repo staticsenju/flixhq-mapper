@@ -391,6 +391,10 @@ app.post('/skip/:tmdbId/:season/:episode', (req, res) => {
     submittedAt: new Date().toISOString()
   };
 
+  if (!skipDb.has(`episodes.${episodeKey}`).value()) {
+    skipDb.set(`episodes.${episodeKey}`, []).write();
+  }
+
   skipDb.get(`episodes.${episodeKey}`)
     .push(newSubmission)
     .write();
@@ -462,6 +466,57 @@ app.post('/skip/admin/verify/:submissionId', (req, res) => {
   }
 
   res.json({ success: true, message: "Submission verified", submission: updatedSubmission });
+});
+
+app.delete('/skip/admin/purge/:tmdbId/:season/:episode', (req, res) => {
+  const { tmdbId, season, episode } = req.params;
+  const { adminKey } = req.body;
+
+  if (adminKey !== ADMIN_KEY) {
+    return res.status(403).json({ error: "Invalid admin key" });
+  }
+
+  const episodeKey = `tmdb_${tmdbId}_s${season}_e${episode}`;
+  const submissions = skipDb.get(`episodes.${episodeKey}`).value();
+
+  if (!submissions) {
+    return res.status(404).json({ error: "Episode not found" });
+  }
+
+  const count = submissions.length;
+  skipDb.unset(`episodes.${episodeKey}`).write();
+
+  res.json({
+    success: true,
+    message: `Purged ${count} submission(s) for ${episodeKey}`,
+    episodeKey,
+    count
+  });
+});
+
+app.delete('/skip/admin/purge-all', (req, res) => {
+  const { adminKey } = req.body;
+
+  if (adminKey !== ADMIN_KEY) {
+    return res.status(403).json({ error: "Invalid admin key" });
+  }
+
+  const episodes = skipDb.get('episodes').value();
+  const episodeCount = Object.keys(episodes).length;
+  let totalSubmissions = 0;
+
+  for (const episodeKey in episodes) {
+    totalSubmissions += episodes[episodeKey].length;
+  }
+
+  skipDb.set('episodes', {}).write();
+
+  res.json({
+    success: true,
+    message: "All skip times purged",
+    episodesPurged: episodeCount,
+    submissionsPurged: totalSubmissions
+  });
 });
 
 app.listen(PORT, () => {
