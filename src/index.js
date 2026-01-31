@@ -8,7 +8,10 @@ const FlixHQ = require('flixhq-api');
 
 const app = express();
 const PORT = 3000;
-const DATA_FILE = 'mappings.json';
+if (!fs.existsSync('src')) {
+  fs.mkdirSync('src');
+}
+const DATA_FILE = 'src/mappings.json';
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
 const flix = new FlixHQ();
