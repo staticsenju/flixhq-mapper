@@ -1,14 +1,15 @@
+require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const cors = require('cors');
 const axios = require('axios');
 const stringSimilarity = require('string-similarity');
-const FlixHQ = require('flixhq-api'); 
+const FlixHQ = require('flixhq-api');
 
 const app = express();
 const PORT = 3000;
 const DATA_FILE = 'mappings.json';
-const TMDB_API_KEY = 'TMDB_KEY_HERE';
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
 
 const flix = new FlixHQ();
 
