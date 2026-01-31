@@ -4,12 +4,11 @@ A specialized Node.js API that maps movie and TV data between The Movie Database
 
 ## Features
 
-- Map TMDB IDs to FlixHQ content automatically
-- Advanced string similarity analysis with year verification
-- Reverse mapping (FlixHQ Slug -> TMDB ID)
-- Get streaming links with required headers
-- Fetch seasons and episodes for TV shows
-- Built-in caching system (`mappings.json`) to speed up requests
+- **Automated Database Builder:** Includes a CLI tool to scrape and map thousands of items automatically.
+- **Smart Matching:** Uses string similarity + year verification to link TMDB IDs to FlixHQ slugs.
+- **Instant Cache:** Prioritizes the local `mappings.json` database for sub-millisecond responses.
+- **Live Fallback:** If an item isn't cached, it scrapes FlixHQ in real-time.
+- **Streaming Ready:** Extracts direct `m3u8` streaming links with required headers.
 
 ## Installation
 
@@ -29,6 +28,33 @@ npm start
 
 ```
 
+## Database Population (Mapper)
+
+The core strength of this API is its ability to build a persistent map between TMDB and FlixHQ. This is handled by `src/mapper.js`.
+
+### How to Run
+
+```bash
+npm run map
+
+```
+
+### How it Works
+
+The mapper is an interactive CLI tool that populates `mappings.json`. When you run it:
+
+1. **Interactive Setup:** It asks if you want to map **Movies** or **TV Shows**, and whether to **Resume** from the last ID or **Start Fresh**.
+2. **TMDB Iteration:** It loops through TMDB IDs sequentially (e.g., ID 100, 101, 102...).
+3. **Cross-Reference:** For every valid TMDB ID, it searches FlixHQ for the exact title.
+4. **Verification:** It uses a strict matching algorithm:
+* **Exact Match:** Title similarity > 98%.
+* **Fuzzy Match:** Title similarity > 90% **AND** Release Year must match.
+
+
+5. **Save:** Valid matches are appended to `src/mappings.json` instantly.
+
+*Note: The mapper includes a built-in delay (1.2s) to prevent your IP from being rate-limited by FlixHQ.*
+
 ## API Endpoints
 
 ### Mapping Endpoints
@@ -40,11 +66,13 @@ GET /map/tmdb/:id
 
 ```
 
-Maps a TMDB ID to its corresponding FlixHQ content. It checks the local cache first; if missing, it scrapes FlixHQ live.
+Maps a TMDB ID to its corresponding FlixHQ content.
+
+* **Logic:** Checks `mappings.json` first. If found, returns cached data. If not, performs a live scrape.
 
 Parameters:
 
-* `type` (optional): Content type (`movie` or `tv`). Default: `movie`
+* `type` (optional): `movie` or `tv`. Default: `movie`
 
 Example:
 
@@ -97,10 +125,6 @@ GET /servers/:id
 ```
 
 Get available streaming servers for a movie or episode ID.
-
-Parameters:
-
-* `type` (optional): `movie` or `tv`. Default: `tv`
 
 #### Get Streaming Sources
 
@@ -155,14 +179,13 @@ When accessing the streaming URLs returned by `/source/:serverId`, you **must** 
 
 ```
 Referer: [https://flixhq.to/](https://flixhq.to/)
-User-Agent: Mozilla/5.0 ... (Standard Browser UA)
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ...
 
 ```
 
-### Example Implementation
+### Example Implementation (Video.js)
 
 ```javascript
-// Video.js player example
 const player = videojs('my-player', {
   html5: {
     hls: {
@@ -182,20 +205,6 @@ const player = videojs('my-player', {
 
 ```
 
-## Mapping Approach
-
-The API uses a rigorous matching process to ensure accuracy:
-
-1. **Cache Check:** Checks `mappings.json` for instant results.
-2. **TMDB Lookup:** Fetches official metadata (Title, Year) from TMDB.
-3. **FlixHQ Search:** Searches FlixHQ for the exact title.
-4. **Similarity Scoring:**
-* Strict type matching (Movie vs TV).
-* String similarity score > 0.95 (Exact match).
-* String similarity score > 0.85 + Year match (Fuzzy match).
-
-
-
 ## Response Format Examples
 
 ### Mapping Response
@@ -211,7 +220,7 @@ The API uses a rigorous matching process to ensure accuracy:
   "flix_title": "Game of Thrones",
   "flix_year": 2011,
   "flix_url": "[https://flixhq.to/tv/game-of-thrones-39546](https://flixhq.to/tv/game-of-thrones-39546)",
-  "source": "live"
+  "source": "cache" 
 }
 
 ```
@@ -236,3 +245,6 @@ The API uses a rigorous matching process to ensure accuracy:
 * string-similarity - Fuzzy matching algorithms
 * axios - HTTP requests
 
+```
+
+```
