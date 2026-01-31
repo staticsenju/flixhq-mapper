@@ -19,14 +19,19 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-let mappings = [];
+let db = { mappings: [] };
 try {
   if (fs.existsSync(DATA_FILE)) {
-    mappings = JSON.parse(fs.readFileSync(DATA_FILE));
+    db = JSON.parse(fs.readFileSync(DATA_FILE));
+    if (Array.isArray(db)) {
+      db = { mappings: db };
+    }
   }
 } catch (e) {
   console.error("Error loading cache");
 }
+
+let mappings = db.mappings;
 
 const ask = (query) => new Promise((resolve) => rl.question(query, resolve));
 
@@ -146,7 +151,8 @@ async function main() {
             };
 
             mappings.push(newEntry);
-            fs.writeFileSync(DATA_FILE, JSON.stringify(mappings, null, 2));
+            db.mappings = mappings;
+            fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
           } else {
             console.log(`${label} | ❌ No Match`);
           }
